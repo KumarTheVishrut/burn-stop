@@ -135,7 +135,7 @@ Our script handles everything automatically:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/burn-stop.git
+git clone https://github.com/KumarTheVishrut/burn-stop.git
 cd burn-stop
 
 # Make setup script executable

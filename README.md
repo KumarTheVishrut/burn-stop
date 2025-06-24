@@ -9,6 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)](https://redis.io/)
 [![OpenAI](https://img.shields.io/badge/OpenAI-Powered-412991?logo=openai&logoColor=white)](https://openai.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Self-Hosted](https://img.shields.io/badge/Self--Hosted-✅-brightgreen)](https://github.com/awesome-selfhosted/awesome-selfhosted)
 
 *Stop burning money on cloud services you forgot about!*
@@ -626,6 +627,21 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 - **OpenAI** - Powering our AI insights
 - **Nginx** - Reliable reverse proxy
 - **Let's Encrypt** - Free SSL certificates
+
+---
+
+## 📜 License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+### 🆓 What does this mean?
+
+- ✅ **Free to use** for personal and commercial projects
+- ✅ **Modify and distribute** as you see fit
+- ✅ **No warranty** - use at your own risk
+- ✅ **Attribution appreciated** but not required
+
+The MIT License is one of the most permissive open source licenses, giving you maximum freedom to use BurnStop however you want!
 
 ---
 

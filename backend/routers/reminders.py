@@ -26,13 +26,20 @@ async def get_upcoming_reminders(
     thirty_days_ahead = current_timestamp + (30 * 24 * 60 * 60)
     
     reminders_key = f"reminders:{org_id}"
+    print(f"Debug: Checking reminders for org {org_id}")
+    print(f"Debug: Current timestamp: {current_timestamp}")
+    print(f"Debug: 30 days ahead: {thirty_days_ahead}")
+    print(f"Debug: Reminders key: {reminders_key}")
+    
     # Get reminders from current time to 30 days ahead using zrangebyscore
-    upcoming_reminders = redis_db.redis_client.zrangebyscore(
+    upcoming_reminders = redis_db.zrangebyscore(
         reminders_key, 
         current_timestamp, 
         thirty_days_ahead, 
         withscores=True
     )
+    
+    print(f"Debug: Found {len(upcoming_reminders)} upcoming reminders: {upcoming_reminders}")
     
     reminders = []
     for service_id, score in upcoming_reminders:

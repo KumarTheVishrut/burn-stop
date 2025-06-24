@@ -4,7 +4,6 @@ import uuid
 from datetime import datetime
 import time
 import json
-import random
 from collections import defaultdict
 
 from models.service import Service, ServiceCreate, ServiceUpdate, ServiceAnalytics
@@ -67,7 +66,13 @@ async def create_service(
     # Add reminder to sorted set (using reminder_date as score)
     reminder_timestamp = int(datetime.fromisoformat(service.reminder_date).timestamp())
     reminders_key = f"reminders:{org_id}"
-    redis_db.zadd(reminders_key, {service_id: reminder_timestamp})
+    print(f"Debug: Adding reminder for service {service_id}")
+    print(f"Debug: Reminder date: {service.reminder_date}")
+    print(f"Debug: Reminder timestamp: {reminder_timestamp}")
+    print(f"Debug: Reminders key: {reminders_key}")
+    
+    result = redis_db.zadd(reminders_key, {service_id: reminder_timestamp})
+    print(f"Debug: ZADD result: {result}")
     
     # Store cost history for analytics (with some sample historical data for better charts)
     cost_history_key = f"cost_history:{org_id}:{service_id}"
@@ -75,18 +80,20 @@ async def create_service(
     
     # If this is the first entry, create some sample historical data for better visualization
     if not existing_history:
-        # Create 3 months of sample historical data with slight variations
+        # Create 3 months of sample historical data with realistic gradual variations
         base_date = datetime.utcnow()
+        base_cost = service.cost
+        
         for i in range(3, 0, -1):  # 3, 2, 1 months ago
             historical_date = datetime(
                 base_date.year, 
                 max(1, base_date.month - i), 
                 base_date.day
             )
-            # Add some realistic cost variation (±10-20%)
-            import random
-            cost_variation = random.uniform(0.8, 1.2)
-            historical_cost = service.cost * cost_variation
+            # Create realistic cost progression (gradual increase/decrease to current cost)
+            # Start from 80-90% of current cost and gradually approach it
+            progression_factor = 0.8 + (0.2 * (4 - i) / 3)  # 0.8 -> 0.87 -> 0.93 -> 1.0
+            historical_cost = base_cost * progression_factor
             
             cost_entry = {
                 "date": historical_date.isoformat(),
@@ -259,8 +266,10 @@ async def get_service_analytics(
                 1
             )
             
-            # Calculate monthly total with some realistic variation
-            monthly_total = total_cost * random.uniform(0.85, 1.15)
+            # Create realistic gradual progression to current total cost
+            # Start from 75% of current cost and gradually increase
+            progression_factor = 0.75 + (0.25 * (7 - i) / 6)  # 0.75 -> 0.79 -> 0.83 -> 0.88 -> 0.92 -> 0.96
+            monthly_total = total_cost * progression_factor
             monthly_costs.append({
                 "date": month_date.isoformat(),
                 "cost": round(monthly_total, 2)

@@ -14,6 +14,7 @@ class Organization(OrganizationBase):
     id: str
     owner_id: str
     members: List[str] = []
+    moderators: List[str] = []  # List of user IDs who are moderators
     created_at: str
 
     class Config:
@@ -27,3 +28,9 @@ class AddUserToOrg(BaseModel):
 
 class UpdateOrganizationBudget(BaseModel):
     budget: float
+
+class AddModeratorToOrg(BaseModel):
+    user_email: str
+
+class RemoveModeratorFromOrg(BaseModel):
+    user_id: str

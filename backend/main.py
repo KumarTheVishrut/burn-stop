@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
 
-from routers import auth, organizations, services, reminders
+from routers import auth, organizations, services, reminders, integrations
 
 app = FastAPI(
     title="BurnStop API",
@@ -13,9 +13,14 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # Next.js default
+    allow_origins=[
+        "http://localhost:3000", 
+        "http://127.0.0.1:3000",
+        "http://localhost:3001", 
+        "http://127.0.0.1:3001"
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -24,6 +29,7 @@ app.include_router(auth.router)
 app.include_router(organizations.router)
 app.include_router(services.router)
 app.include_router(reminders.router)
+app.include_router(integrations.router)
 
 @app.get("/")
 async def root():

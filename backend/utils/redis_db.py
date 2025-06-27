@@ -84,6 +84,14 @@ class RedisDB:
         except Exception as e:
             print(f"Error getting from sorted set by score {key}: {e}")
             return []
+    
+    def keys(self, pattern: str = "*"):
+        """Get all keys matching a pattern"""
+        try:
+            return self.redis_client.keys(pattern)
+        except Exception as e:
+            print(f"Error getting keys with pattern {pattern}: {e}")
+            return []
 
 # Global Redis instance
 redis_db = RedisDB()

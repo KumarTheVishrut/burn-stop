@@ -10,8 +10,30 @@ from models.service import Service, ServiceCreate, ServiceUpdate, ServiceAnalyti
 from models.user import User
 from routers.auth import get_current_user
 from utils.redis_db import redis_db
+from utils.integrations import IntegrationService
+from models.service import ServiceType
 
 router = APIRouter(tags=["services"])
+
+# Helper functions for organization access control
+def has_moderator_access(org_data: dict, user_id: str) -> bool:
+    """Check if user has moderator access (owner or moderator)"""
+    return org_data["owner_id"] == user_id or user_id in org_data.get("moderators", [])
+
+def check_organization_moderator_access(org_id: str, current_user: User) -> dict:
+    """Check if user has moderator access to organization and return org data"""
+    # First check if user is a member
+    if org_id not in current_user.organizations:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Get organization data
+    org_key = f"org:{org_id}"
+    org_data = redis_db.get(org_key)
+    
+    if not org_data:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    return org_data
 
 @router.post("/organizations/{org_id}/services", response_model=Service)
 async def create_service(
@@ -19,9 +41,10 @@ async def create_service(
     service: ServiceCreate,
     current_user: User = Depends(get_current_user)
 ):
-    # Check if user has access to this organization
-    if org_id not in current_user.organizations:
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Check if user has moderator access to this organization
+    org_data = check_organization_moderator_access(org_id, current_user)
+    if not has_moderator_access(org_data, current_user.id):
+        raise HTTPException(status_code=403, detail="Only organization owner or moderators can create services")
     
     # Create service
     service_id = str(uuid.uuid4())
@@ -41,6 +64,7 @@ async def create_service(
         "iam_number": service.iam_number,
         "instance_id": service.instance_id,
         "service_id": service.service_id,
+        "instance_type": service.instance_type.value if service.instance_type else None,
         "region": service.region,
         
         # API specific
@@ -109,6 +133,16 @@ async def create_service(
     existing_history.append(cost_entry)
     redis_db.set(cost_history_key, existing_history)
     
+    # Send alerts to all configured integrations (global for user)
+    print(f"DEBUG: About to send global service creation alert for user {current_user.email}")
+    try:
+        await send_service_creation_alert(org_id, service_data, current_user)
+        print(f"DEBUG: Finished sending global service creation alert for user {current_user.email}")
+    except Exception as e:
+        print(f"DEBUG: Error in service creation alert: {e}")
+        import traceback
+        traceback.print_exc()
+    
     return Service(**service_data)
 
 @router.get("/organizations/{org_id}/services", response_model=List[Service])
@@ -145,10 +179,11 @@ async def update_service(
     if not service_data:
         raise HTTPException(status_code=404, detail="Service not found")
     
-    # Check if user has access to this service's organization
+    # Check if user has moderator access to this service's organization
     org_id = service_data["org_id"]
-    if org_id not in current_user.organizations:
-        raise HTTPException(status_code=403, detail="Access denied")
+    org_data = check_organization_moderator_access(org_id, current_user)
+    if not has_moderator_access(org_data, current_user.id):
+        raise HTTPException(status_code=403, detail="Only organization owner or moderators can update services")
     
     # Update fields
     update_data = service_update.dict(exclude_unset=True)
@@ -200,6 +235,11 @@ async def delete_service(
     if org_id not in current_user.organizations:
         raise HTTPException(status_code=403, detail="Access denied")
     
+    # Check if user has moderator access (owner or moderator)
+    org_data = check_organization_moderator_access(org_id, current_user)
+    if not has_moderator_access(org_data, current_user.id):
+        raise HTTPException(status_code=403, detail="Only organization owner or moderators can delete services")
+    
     # Mark for deletion instead of actual deletion
     service_data["status"] = "pending_deletion"
     service_data["updated_at"] = datetime.utcnow().isoformat()
@@ -208,6 +248,16 @@ async def delete_service(
     # Remove from reminders
     reminders_key = f"reminders:{org_id}"
     redis_db.zrem(reminders_key, service_id)
+    
+    # Send deletion alerts to all configured integrations (global for user)
+    print(f"DEBUG: About to send global service deletion alert for user {current_user.email}")
+    try:
+        await send_service_deletion_alert(org_id, service_data, current_user)
+        print(f"DEBUG: Finished sending global service deletion alert for user {current_user.email}")
+    except Exception as e:
+        print(f"DEBUG: Error in service deletion alert: {e}")
+        import traceback
+        traceback.print_exc()
     
     return {"message": "Service marked for deletion"}
 
@@ -314,3 +364,541 @@ async def get_service_analytics(
         predicted_next_month=predicted_next_month,
         cost_trend=cost_trend
     )
+
+@router.post("/reminder-alerts")
+async def trigger_reminder_alerts(
+    days_ahead: int = 7,
+    current_user: User = Depends(get_current_user)
+):
+    """Manually trigger reminder alerts for upcoming service reminders"""
+    try:
+        await send_reminder_alerts(current_user, days_ahead)
+        return {"message": f"Reminder alerts sent for upcoming reminders in the next {days_ahead} days"}
+    except Exception as e:
+        print(f"Error triggering reminder alerts: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send reminder alerts")
+
+async def send_service_creation_alert(org_id: str, service_data: dict, current_user: User):
+    """Send alerts to all configured integrations for the user (global across all organizations)"""
+    try:
+        print(f"DEBUG: Starting global service creation alert for user {current_user.email}")
+        
+        # Get all integrations for ALL organizations that this user belongs to
+        all_integration_keys = []
+        
+        for user_org_id in current_user.organizations:
+            try:
+                org_integration_keys = redis_db.keys(f"integration:{user_org_id}:*")
+                all_integration_keys.extend(org_integration_keys)
+                print(f"DEBUG: Found {len(org_integration_keys)} integrations for org {user_org_id}")
+            except Exception as e:
+                print(f"DEBUG: Error getting integration keys for org {user_org_id}: {e}")
+        
+        print(f"DEBUG: Total global integration keys found: {len(all_integration_keys)}")
+        
+        if not all_integration_keys:
+            print(f"DEBUG: No integrations configured for user {current_user.email} across all organizations")
+            print(f"DEBUG: User organizations: {current_user.organizations}")
+            return
+        
+        # Format service metadata for the alert
+        platform_emojis = {
+            "aws": "🟠 Amazon Web Services",
+            "gcp": "🔵 Google Cloud Platform", 
+            "azure": "🔷 Microsoft Azure",
+            "other": "⚡ Other Platform"
+        }
+        
+        service_type_emojis = {
+            "ec2": "🖥️", "s3": "🗄️", "rds": "🗃️", "lambda": "⚡", "eks": "☸️",
+            "compute_engine": "🖥️", "cloud_storage": "🗄️", "cloud_sql": "🗃️",
+            "virtual_machines": "🖥️", "blob_storage": "🗄️", "sql_database": "🗃️",
+            "cloud": "☁️", "api": "🔌", "database": "🗃️", "storage": "🗄️"
+        }
+        
+        platform_name = platform_emojis.get(service_data["platform"], f"⚡ {service_data['platform'].title()}")
+        service_emoji = service_type_emojis.get(service_data["service_type"], "📦")
+        
+        # Get organization name for context
+        org_key = f"org:{org_id}"
+        org_data = redis_db.get(org_key)
+        org_name = org_data.get('name', 'Unknown Organization') if org_data else 'Unknown Organization'
+        
+        # Create rich alert message with organization context
+        alert_message = f"""🎉 **New Service Created!**
+
+{service_emoji} **Service:** {service_data['name']}
+🏢 **Organization:** {org_name}
+{platform_name}
+📊 **Type:** {service_data['service_type'].replace('_', ' ').title()}
+💰 **Monthly Cost:** ${service_data['cost']:.2f}
+📅 **Next Reminder:** {service_data['reminder_date'][:10]}
+👤 **Owner:** {service_data.get('owner_email', 'Not specified')}"""
+
+        # Add optional metadata if present
+        if service_data.get('instance_type'):
+            alert_message += f"\n🖥️ **Instance Type:** {service_data['instance_type'].replace('_', ' ').title()}"
+        
+        if service_data.get('description'):
+            alert_message += f"\n📝 **Description:** {service_data['description']}"
+        
+        if service_data.get('region'):
+            alert_message += f"\n🌍 **Region:** {service_data['region']}"
+        
+        if service_data.get('instance_id'):
+            alert_message += f"\n🏷️ **Instance ID:** {service_data['instance_id']}"
+        
+        if service_data.get('iam_number'):
+            alert_message += f"\n🔐 **IAM Number:** {service_data['iam_number']}"
+        
+        if service_data.get('api_quota_tokens'):
+            alert_message += f"\n🎫 **API Quota:** {service_data['api_quota_tokens']:,} tokens"
+        
+        if service_data.get('tags'):
+            tags = ', '.join(service_data['tags']) if isinstance(service_data['tags'], list) else str(service_data['tags'])
+            alert_message += f"\n🏷️ **Tags:** {tags}"
+        
+        alert_message += f"\n\n⏰ **Created:** {service_data['created_at'][:19]} UTC"
+        alert_message += f"\n🆔 **Service ID:** {service_data['id']}"
+        
+        # Send to all configured integrations (global across user's organizations)
+        success_count = 0
+        total_count = 0
+        
+        for integration_key in all_integration_keys:
+            try:
+                integration_data = redis_db.get(integration_key)
+                print(f"DEBUG: Processing integration {integration_key}: {integration_data}")
+                
+                if not integration_data or not integration_data.get('enabled', False):
+                    print(f"DEBUG: Skipping disabled integration {integration_key}")
+                    continue
+                
+                total_count += 1
+                integration_type = integration_data['type']
+                config = integration_data['config']
+                
+                print(f"DEBUG: Sending alert via {integration_type} integration")
+                
+                # Send alert based on integration type
+                success = await IntegrationService.send_alert_to_integration(
+                    integration_type=integration_type,
+                    config=config,
+                    message=alert_message,
+                    subject="🎉 New Service Created - BurnStop Alert"
+                )
+                
+                if success:
+                    success_count += 1
+                    print(f"Service creation alert sent successfully via {integration_type}")
+                else:
+                    print(f"Failed to send service creation alert via {integration_type}")
+                    
+            except Exception as e:
+                print(f"Error sending alert via integration {integration_key}: {e}")
+        
+        print(f"Global service creation alerts: {success_count}/{total_count} integrations notified successfully across user's organizations")
+        
+    except Exception as e:
+        print(f"Error sending global service creation alerts: {e}")
+        # Don't raise the exception to avoid breaking service creation
+
+async def send_service_deletion_alert(org_id: str, service_data: dict, current_user: User):
+    """Send alerts to all configured integrations for the user when a service is deleted (global across all organizations)"""
+    try:
+        print(f"DEBUG: Starting global service deletion alert for user {current_user.email}")
+        
+        # Get all integrations for ALL organizations that this user belongs to
+        all_integration_keys = []
+        
+        for user_org_id in current_user.organizations:
+            try:
+                org_integration_keys = redis_db.keys(f"integration:{user_org_id}:*")
+                all_integration_keys.extend(org_integration_keys)
+                print(f"DEBUG: Found {len(org_integration_keys)} integrations for org {user_org_id}")
+            except Exception as e:
+                print(f"DEBUG: Error getting integration keys for org {user_org_id}: {e}")
+        
+        print(f"DEBUG: Total global integration keys found for deletion: {len(all_integration_keys)}")
+        
+        if not all_integration_keys:
+            print(f"DEBUG: No integrations configured for user {current_user.email} across all organizations")
+            print(f"DEBUG: User organizations: {current_user.organizations}")
+            return
+        
+        # Format service metadata for the deletion alert
+        platform_emojis = {
+            "aws": "🟠 Amazon Web Services",
+            "gcp": "🔵 Google Cloud Platform", 
+            "azure": "🔷 Microsoft Azure",
+            "other": "⚡ Other Platform"
+        }
+        
+        service_type_emojis = {
+            "ec2": "🖥️", "s3": "��️", "rds": "🗃️", "lambda": "⚡", "eks": "☸️",
+            "compute_engine": "🖥️", "cloud_storage": "🗄️", "cloud_sql": "🗃️",
+            "virtual_machines": "🖥️", "blob_storage": "🗄️", "sql_database": "🗃️",
+            "cloud": "☁️", "api": "🔌", "database": "🗃️", "storage": "🗄️"
+        }
+        
+        platform_name = platform_emojis.get(service_data["platform"], f"⚡ {service_data['platform'].title()}")
+        service_emoji = service_type_emojis.get(service_data["service_type"], "📦")
+        
+        # Get organization name for context
+        org_key = f"org:{org_id}"
+        org_data = redis_db.get(org_key)
+        org_name = org_data.get('name', 'Unknown Organization') if org_data else 'Unknown Organization'
+        
+        # Create rich deletion alert message with organization context
+        alert_message = f"""🗑️ **Service Deleted!**
+
+{service_emoji} **Service:** {service_data['name']}
+🏢 **Organization:** {org_name}
+{platform_name}
+📊 **Type:** {service_data['service_type'].replace('_', ' ').title()}
+💰 **Monthly Cost Saved:** ${service_data['cost']:.2f}
+👤 **Owner:** {service_data.get('owner_email', 'Not specified')}"""
+
+        # Add optional metadata if present
+        if service_data.get('instance_type'):
+            alert_message += f"\n🖥️ **Instance Type:** {service_data['instance_type'].replace('_', ' ').title()}"
+        
+        if service_data.get('description'):
+            alert_message += f"\n📝 **Description:** {service_data['description']}"
+        
+        if service_data.get('region'):
+            alert_message += f"\n🌍 **Region:** {service_data['region']}"
+        
+        if service_data.get('instance_id'):
+            alert_message += f"\n🏷️ **Instance ID:** {service_data['instance_id']}"
+        
+        if service_data.get('iam_number'):
+            alert_message += f"\n🔐 **IAM Number:** {service_data['iam_number']}"
+        
+        if service_data.get('tags'):
+            tags = ', '.join(service_data['tags']) if isinstance(service_data['tags'], list) else str(service_data['tags'])
+            alert_message += f"\n🏷️ **Tags:** {tags}"
+        
+        alert_message += f"\n\n🗑️ **Deleted:** {service_data['updated_at'][:19]} UTC"
+        alert_message += f"\n🆔 **Service ID:** {service_data['id']}"
+        alert_message += f"\n⚠️ **Status:** Marked for deletion"
+        
+        # Send to all configured integrations (global across user's organizations)
+        success_count = 0
+        total_count = 0
+        
+        for integration_key in all_integration_keys:
+            try:
+                integration_data = redis_db.get(integration_key)
+                print(f"DEBUG: Processing deletion integration {integration_key}: {integration_data}")
+                
+                if not integration_data or not integration_data.get('enabled', False):
+                    print(f"DEBUG: Skipping disabled integration {integration_key}")
+                    continue
+                
+                total_count += 1
+                integration_type = integration_data['type']
+                config = integration_data['config']
+                
+                print(f"DEBUG: Sending deletion alert via {integration_type} integration")
+                
+                # Send alert based on integration type
+                success = await IntegrationService.send_alert_to_integration(
+                    integration_type=integration_type,
+                    config=config,
+                    message=alert_message,
+                    subject="🗑️ Service Deleted - BurnStop Alert"
+                )
+                
+                if success:
+                    success_count += 1
+                    print(f"Service deletion alert sent successfully via {integration_type}")
+                else:
+                    print(f"Failed to send service deletion alert via {integration_type}")
+                    
+            except Exception as e:
+                print(f"Error sending deletion alert via integration {integration_key}: {e}")
+        
+        print(f"Global service deletion alerts: {success_count}/{total_count} integrations notified successfully across user's organizations")
+        
+    except Exception as e:
+        print(f"Error sending global service deletion alerts: {e}")
+        # Don't raise the exception to avoid breaking service deletion
+
+async def send_reminder_alerts(current_user: User, days_ahead: int = 7):
+    """Send alerts for upcoming service reminders (global across all user's organizations)"""
+    try:
+        print(f"DEBUG: Starting global reminder alerts for user {current_user.email} - checking {days_ahead} days ahead")
+        
+        # Get all integrations for ALL organizations that this user belongs to
+        all_integration_keys = []
+        
+        for user_org_id in current_user.organizations:
+            try:
+                org_integration_keys = redis_db.keys(f"integration:{user_org_id}:*")
+                all_integration_keys.extend(org_integration_keys)
+                print(f"DEBUG: Found {len(org_integration_keys)} integrations for org {user_org_id}")
+            except Exception as e:
+                print(f"DEBUG: Error getting integration keys for org {user_org_id}: {e}")
+        
+        print(f"DEBUG: Total global integration keys found for reminders: {len(all_integration_keys)}")
+        
+        if not all_integration_keys:
+            print(f"DEBUG: No integrations configured for user {current_user.email} across all organizations")
+            return
+        
+        # Collect all upcoming reminders across all user's organizations
+        current_timestamp = int(time.time())
+        future_timestamp = current_timestamp + (days_ahead * 24 * 60 * 60)
+        
+        all_upcoming_reminders = []
+        
+        for user_org_id in current_user.organizations:
+            try:
+                reminders_key = f"reminders:{user_org_id}"
+                upcoming_reminders = redis_db.zrangebyscore(
+                    reminders_key, 
+                    current_timestamp, 
+                    future_timestamp, 
+                    withscores=True
+                )
+                
+                # Get organization name
+                org_key = f"org:{user_org_id}"
+                org_data = redis_db.get(org_key)
+                org_name = org_data.get('name', 'Unknown Organization') if org_data else 'Unknown Organization'
+                
+                for service_id, reminder_timestamp in upcoming_reminders:
+                    service_key = f"service:{service_id}"
+                    service_data = redis_db.get(service_key)
+                    
+                    if service_data and service_data.get("status") == "active":
+                        reminder_info = {
+                            'service_data': service_data,
+                            'org_name': org_name,
+                            'org_id': user_org_id,
+                            'reminder_timestamp': reminder_timestamp,
+                            'days_until': round((reminder_timestamp - current_timestamp) / (24 * 60 * 60), 1)
+                        }
+                        all_upcoming_reminders.append(reminder_info)
+                        
+            except Exception as e:
+                print(f"DEBUG: Error getting reminders for org {user_org_id}: {e}")
+        
+        if not all_upcoming_reminders:
+            print(f"DEBUG: No upcoming reminders found for user {current_user.email} in the next {days_ahead} days")
+            return
+        
+        # Sort reminders by days until due
+        all_upcoming_reminders.sort(key=lambda x: x['days_until'])
+        
+        print(f"DEBUG: Found {len(all_upcoming_reminders)} upcoming reminders")
+        
+        # Create rich reminder alert message
+        alert_message = f"""⏰ **Upcoming Service Reminders**
+
+You have {len(all_upcoming_reminders)} service reminder(s) in the next {days_ahead} days:
+
+"""
+        
+        platform_emojis = {
+            "aws": "🟠", "gcp": "🔵", "azure": "🔷", "other": "⚡"
+        }
+        
+        service_type_emojis = {
+            "ec2": "🖥️", "s3": "🗄️", "rds": "🗃️", "lambda": "⚡", "eks": "☸️",
+            "compute_engine": "🖥️", "cloud_storage": "🗄️", "cloud_sql": "🗃️",
+            "virtual_machines": "🖥️", "blob_storage": "🗄️", "sql_database": "🗃️",
+            "cloud": "☁️", "api": "🔌", "database": "🗃️", "storage": "🗄️"
+        }
+        
+        total_cost = 0
+        
+        for i, reminder in enumerate(all_upcoming_reminders, 1):
+            service_data = reminder['service_data']
+            platform_emoji = platform_emojis.get(service_data["platform"], "⚡")
+            service_emoji = service_type_emojis.get(service_data["service_type"], "📦")
+            total_cost += service_data.get('cost', 0)
+            
+            days_until = reminder['days_until']
+            urgency_indicator = "🔴" if days_until <= 1 else "🟡" if days_until <= 3 else "🟢"
+            
+            alert_message += f"""
+{urgency_indicator} **{i}. {service_data['name']}**
+   {service_emoji} {service_data['service_type'].replace('_', ' ').title()} • {platform_emoji} {service_data['platform'].upper()}
+   🏢 {reminder['org_name']}
+   💰 ${service_data['cost']:.2f}/month
+   📅 Due in {days_until} day(s) - {datetime.fromtimestamp(reminder['reminder_timestamp']).strftime('%Y-%m-%d')}"""
+   
+            # Add instance type if available
+            if service_data.get('instance_type'):
+                alert_message += f"\n   🖥️ {service_data['instance_type'].replace('_', ' ').title()}"
+            
+            # Add region if available  
+            if service_data.get('region'):
+                alert_message += f"\n   🌍 {service_data['region']}"
+            
+            alert_message += f"""
+"""
+        
+        alert_message += f"""
+📊 **Summary:**
+• Total services: {len(all_upcoming_reminders)}
+• Total monthly cost: ${total_cost:.2f}
+• Most urgent: {all_upcoming_reminders[0]['days_until']} day(s)
+
+🎯 **Action Required:** Review and update these services to avoid cost overruns!
+"""
+        
+        # Send to all configured integrations
+        success_count = 0
+        total_count = 0
+        
+        for integration_key in all_integration_keys:
+            try:
+                integration_data = redis_db.get(integration_key)
+                
+                if not integration_data or not integration_data.get('enabled', False):
+                    continue
+                
+                total_count += 1
+                integration_type = integration_data['type']
+                config = integration_data['config']
+                
+                print(f"DEBUG: Sending reminder alert via {integration_type} integration")
+                
+                # Send alert based on integration type
+                success = await IntegrationService.send_alert_to_integration(
+                    integration_type=integration_type,
+                    config=config,
+                    message=alert_message,
+                    subject=f"⏰ {len(all_upcoming_reminders)} Upcoming Service Reminders - BurnStop Alert"
+                )
+                
+                if success:
+                    success_count += 1
+                    print(f"Reminder alert sent successfully via {integration_type}")
+                else:
+                    print(f"Failed to send reminder alert via {integration_type}")
+                    
+            except Exception as e:
+                print(f"Error sending reminder alert via integration {integration_key}: {e}")
+        
+        print(f"Global reminder alerts: {success_count}/{total_count} integrations notified successfully")
+        
+    except Exception as e:
+        print(f"Error sending global reminder alerts: {e}")
+        # Don't raise the exception
+
+@router.get("/service-types")
+async def get_service_types():
+    """Get all available service types from the ServiceType enum, categorized by platform"""
+    
+    # Categorize services by platform
+    aws_services = []
+    gcp_services = []
+    azure_services = []
+    other_services = []
+    
+    # AWS instance types
+    aws_instance_types = []
+    gcp_instance_types = []
+    
+    for service_type in ServiceType:
+        value = service_type.value
+        label = service_type.value.replace("_", " ").title()
+        
+        service_item = {
+            "value": value,
+            "label": label
+        }
+        
+        # Categorize AWS services
+        if any(aws_service in value for aws_service in [
+            'ec2', 's3', 'rds', 'lambda', 'dynamodb', 'cloudfront', 'route53', 'vpc', 
+            'iam', 'sns', 'sqs', 'ses', 'cloudwatch', 'eks', 'ecs', 'fargate',
+            'elasticbeanstalk', 'cloudformation', 'codecommit', 'codebuild', 'codedeploy',
+            'codepipeline', 'api_gateway', 'kinesis', 'redshift', 'elasticache',
+            'cloudtrail', 'config', 'secrets_manager', 'systems_manager', 'batch',
+            'step_functions', 'eventbridge', 'glue', 'athena', 'quicksight',
+            'sagemaker', 'rekognition', 'comprehend', 'textract', 'bedrock',
+            'lex', 'polly', 'translate', 'transcribe', 'x_ray', 'application_load_balancer',
+            'network_load_balancer', 'nat_gateway', 'internet_gateway', 'vpn_gateway',
+            'direct_connect', 'storage_gateway', 'backup', 'datasync', 'transfer_family',
+            'workspaces', 'appstream', 'connect', 'chime', 'organizations',
+            'control_tower', 'security_hub', 'guardduty', 'inspector', 'macie',
+            'certificate_manager', 'kms', 'cloudhsm', 'waf', 'shield', 'marketplace',
+            'cost_explorer', 'budgets', 'trusted_advisor', 'support', 'personal_health_dashboard'
+        ]):
+            aws_services.append(service_item)
+        
+        # AWS Instance Types - check for exact matches and patterns
+        elif (value.startswith(('t4g_', 't3_', 't3a_', 't2_', 'm7g_', 'm7i_', 'm7a_', 'm6g_', 'm6i_', 'm6a_',
+                               'm5_', 'm5a_', 'm5n_', 'c7g_', 'c7i_', 'c7a_', 'c6g_', 'c6i_', 'c6a_',
+                               'c5_', 'c5a_', 'c5n_', 'r7g_', 'r7i_', 'r7a_', 'r6g_', 'r6i_', 'r6a_',
+                               'r5_', 'r5a_', 'r5n_', 'x2gd_', 'x2idn_', 'x2iedn_', 'x2iezn_', 'x1e_',
+                               'x1_', 'i4g_', 'i4i_', 'i3_', 'i3en_', 'd3_', 'd3en_', 'p5_', 'p4d_',
+                               'p4de_', 'p3_', 'p3dn_', 'p2_', 'g5_', 'g5g_', 'g4dn_', 'g4ad_', 'g3_',
+                               'inf2_', 'inf1_', 'trn1_', 'trn1n_', 'dl1_', 'hpc7g_', 'hpc7a_', 'hpc6id_', 'hpc6a_'))):
+            aws_instance_types.append(service_item)
+        
+        # GCP services
+        elif any(gcp_service in value for gcp_service in [
+            'compute_engine', 'cloud_storage', 'cloud_sql', 'cloud_functions', 'gke',
+            'cloud_run', 'app_engine', 'bigquery', 'cloud_bigtable', 'cloud_spanner',
+            'firestore', 'cloud_cdn', 'cloud_dns', 'cloud_load_balancing', 'vpc',
+            'cloud_iam', 'cloud_pub_sub', 'cloud_tasks', 'cloud_scheduler',
+            'cloud_monitoring', 'cloud_logging', 'cloud_trace', 'cloud_profiler',
+            'cloud_debugger', 'cloud_build', 'cloud_source_repositories',
+            'artifact_registry', 'container_registry', 'cloud_endpoints',
+            'api_gateway', 'cloud_dataflow', 'cloud_dataproc', 'cloud_composer',
+            'cloud_data_fusion', 'looker', 'vertex_ai', 'automl', 'ai_platform',
+            'vision_api', 'speech_to_text', 'text_to_speech', 'cloud_translate',
+            'natural_language_ai', 'document_ai', 'video_intelligence',
+            'recommendations_ai', 'dialogflow', 'contact_center_ai',
+            'cloud_security_command_center', 'cloud_armor', 'binary_authorization',
+            'cloud_kms', 'cloud_hsm', 'secret_manager', 'identity_platform',
+            'cloud_identity', 'access_context_manager', 'cloud_asset_inventory',
+            'cloud_console', 'cloud_shell', 'cloud_deployment_manager',
+            'cloud_resource_manager', 'cloud_billing', 'cloud_support',
+            'firebase_'
+        ]):
+            gcp_services.append(service_item)
+        
+        # GCP Instance Types - check for exact matches and patterns
+        elif (value.startswith(('e2_', 'n1_', 'n2_', 'n2d_', 't2d_', 't2a_', 'c3_', 'c2_', 'c2d_',
+                               'm1_', 'm2_', 'm3_', 'a2_', 'a3_', 'g2_', 'h3_', 'sole_tenant_'))):
+            gcp_instance_types.append(service_item)
+        
+        # Azure services
+        elif any(azure_service in value for azure_service in [
+            'virtual_machines', 'blob_storage', 'sql_database', 'azure_functions',
+            'aks', 'container_instances', 'cosmos_db', 'cognitive_services',
+            'app_service', 'service_fabric', 'batch', 'virtual_machine_scale_sets',
+            'load_balancer', 'application_gateway', 'cdn', 'traffic_manager',
+            'expressroute', 'vpn_gateway', 'azure_firewall', 'azure_active_directory'
+        ]):
+            azure_services.append(service_item)
+        
+        # Other services
+        else:
+            other_services.append(service_item)
+    
+    return {
+        "aws": {
+            "services": aws_services,
+            "instance_types": aws_instance_types
+        },
+        "gcp": {
+            "services": gcp_services,
+            "instance_types": gcp_instance_types
+        },
+        "azure": {
+            "services": azure_services,
+            "instance_types": []
+        },
+        "other": {
+            "services": other_services,
+            "instance_types": []
+        }
+    }

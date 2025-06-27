@@ -14,7 +14,7 @@
 
 *Stop burning money on cloud services you forgot about!*
 
-[🚀 Quick Start](#-quick-start) • [📊 Features](#-features) • [🏠 Self-Hosting](#-self-hosting-guide) • [🐳 Docker](#-docker-deployment) • [🔧 API](#-api-documentation)
+[🚀 Quick Start](#-quick-start) • [📊 Features](#-features) • [🔗 Integrations](#-integrations) • [☁️ Cloud Support](#️-comprehensive-cloud-support) • [🏠 Self-Hosting](#-self-hosting-guide) • [🐳 Docker](#-docker-deployment) • [🔧 API](#-api-documentation)
 
 </div>
 
@@ -22,7 +22,7 @@
 
 ## 🌟 What is BurnStop?
 
-BurnStop is a **powerful, self-hosted platform** that helps startups and developers track, analyze, and optimize their cloud infrastructure costs across **AWS, GCP, Azure, and other platforms**. With AI-powered insights, real-time cost tracking, and beautiful analytics, BurnStop ensures you never overspend on cloud services again.
+BurnStop is a **powerful, self-hosted platform** that helps startups and developers track, analyze, and optimize their cloud infrastructure costs across **AWS, GCP, Azure, and other platforms**. With AI-powered insights, real-time cost tracking, webhook integrations, and beautiful analytics, BurnStop ensures you never overspend on cloud services again.
 
 ### 💡 Why BurnStop?
 
@@ -30,19 +30,30 @@ BurnStop is a **powerful, self-hosted platform** that helps startups and develop
 - **🤖 AI-Powered Insights**: Get personalized cost optimization recommendations
 - **📊 Beautiful Analytics**: Visualize spending trends and predictions
 - **⏰ Smart Reminders**: Never miss a renewal or billing cycle
+- **🔗 Multi-Platform Alerts**: Slack, Discord, Email, Teams, Google Workspace integrations
 - **🏠 Self-Hosted**: Your data stays on your servers
 - **🔒 Enterprise Security**: Built with security-first principles
-- **🌐 Multi-Platform**: AWS, GCP, Azure, and custom services
+- **🌐 Comprehensive Cloud Coverage**: 1,200+ AWS, GCP, and Azure services supported
 
 ---
 
 ## 📊 Features
 
 ### 🎯 **Core Features**
-- **Multi-Platform Support**: Track services across AWS, GCP, Azure, and other platforms
+- **Comprehensive Cloud Support**: Track 1,200+ services across AWS, GCP, Azure
+- **Instance Type Tracking**: Full support for 600+ AWS and GCP instance types
 - **Real-Time Cost Tracking**: Monitor spending with live updates and budget alerts
 - **Smart Budget Management**: Set budgets and get warned before overspending
 - **Service Organization**: Group services by teams, projects, or environments
+- **Multi-Region Support**: 100+ regions across all major cloud providers
+
+### 🔗 **Advanced Integrations**
+- **Slack Webhooks**: Rich message formatting with attachments and colors
+- **Discord Notifications**: Rich embeds with custom avatars and styling
+- **Email Alerts**: Professional HTML templates with SMTP support
+- **Microsoft Teams**: MessageCards with adaptive layouts
+- **Google Workspace**: Interactive cards with dashboard links
+- **Webhook Testing**: Test individual integrations or bulk test all platforms
 
 ### 🤖 **AI-Powered Intelligence**
 - **Cost Optimization**: AI analyzes your spending patterns and suggests savings
@@ -55,11 +66,13 @@ BurnStop is a **powerful, self-hosted platform** that helps startups and develop
 - **Platform Distribution**: See which platforms cost you the most
 - **Budget vs. Actual**: Track performance against your budgets
 - **Predictive Analytics**: Linear regression for cost forecasting
+- **Historical Data**: 3 months of historical cost progression for better insights
 
-### ⏰ **Smart Reminders**
+### ⏰ **Smart Reminders & Alerts**
 - **Renewal Notifications**: Never miss a service renewal
 - **Budget Alerts**: Get notified when approaching budget limits
 - **Cost Spikes**: Immediate alerts for unusual spending patterns
+- **Service Creation/Deletion**: Real-time notifications across all platforms
 - **Custom Schedules**: Set reminders for any service or billing cycle
 
 ### 🎨 **Modern UI/UX**
@@ -67,6 +80,119 @@ BurnStop is a **powerful, self-hosted platform** that helps startups and develop
 - **Responsive Design**: Works perfectly on desktop, tablet, and mobile
 - **Real-Time Updates**: Live data updates without page refresh
 - **Intuitive Dashboard**: Everything you need at a glance
+- **Dynamic Service Forms**: Intelligent dropdowns that adapt to selected platforms
+
+---
+
+## 🔗 Integrations
+
+### 📢 **Webhook Alert Platforms**
+
+#### **Slack Integration**
+- Rich message formatting with colors and attachments
+- Service creation, deletion, and reminder alerts
+- Clickable links to BurnStop dashboard
+- Custom branding and footers
+
+#### **Discord Integration** 
+- Rich embeds with custom colors and avatars
+- Structured alert messages with emojis
+- Thumbnail images and timestamp formatting
+- Professional Discord bot appearance
+
+#### **Email Integration**
+- Professional HTML email templates
+- SMTP server support (Gmail, Outlook, custom)
+- Styled cost alerts with CSS formatting
+- Configurable sender names and recipients
+
+#### **Microsoft Teams Integration**
+- MessageCard format with adaptive layouts
+- Interactive buttons linking to dashboard
+- Professional corporate styling
+- Structured fact displays
+
+#### **Google Workspace Integration**
+- Interactive cards with button actions
+- Rich text formatting and sections
+- Professional Google Chat appearance
+- Dashboard integration links
+
+### 🔧 **Integration Management**
+- **Easy Setup**: Simple webhook URL configuration
+- **Test Functionality**: Test individual or all integrations
+- **Status Monitoring**: Green checkmarks for active integrations
+- **Update Anytime**: Modify webhook settings without downtime
+- **Global Alerts**: Notifications across all user organizations
+
+---
+
+## ☁️ **Comprehensive Cloud Support**
+
+### 🟠 **Amazon Web Services (AWS)**
+**522 Services Supported** including:
+
+#### **Core Services**
+- **Compute**: EC2, Lambda, ECS, EKS, Fargate, Batch
+- **Storage**: S3, EBS, EFS, FSx, Storage Gateway
+- **Database**: RDS, DynamoDB, DocumentDB, Neptune, Redshift
+- **Networking**: VPC, CloudFront, Route 53, Load Balancers
+
+#### **AI/ML Services** 
+- Bedrock, SageMaker, Comprehend, Textract, Rekognition
+- Translate, Polly, Transcribe, Lex, Kendra
+
+#### **Analytics & Data**
+- Athena, Kinesis, QuickSight, Data Pipeline, Glue
+- EMR, MSK, OpenSearch, Timestream
+
+#### **Security & Identity**
+- IAM, Cognito, GuardDuty, Security Hub, KMS
+- Secrets Manager, Certificate Manager, WAF
+
+#### **Instance Types (400+ Supported)**
+- **General Purpose**: T4g, T3, T3a, T2, M7g, M7i, M7a, M6g, M6i, M6a, M5, M5a, M5n
+- **Compute Optimized**: C7g, C7i, C7a, C6g, C6i, C6a, C5, C5a, C5n
+- **Memory Optimized**: R7g, R7i, R7a, R6g, R6i, R6a, R5, R5a, R5n, X2gd, X2idn, X2iedn, X2iezn, X1e, X1
+- **Storage Optimized**: I4g, I4i, I3, I3en, D3, D3en
+- **Accelerated Computing**: P5, P4d, P4de, P3, P3dn, P2, G5, G5g, G4dn, G4ad, G3, Inf2, Inf1, Trn1, Trn1n, DL1
+- **High Performance Computing**: Hpc7g, Hpc7a, Hpc6id, Hpc6a
+
+### 🔵 **Google Cloud Platform (GCP)**
+**241 Services Supported** including:
+
+#### **Core Services**
+- **Compute**: Compute Engine, Cloud Functions, GKE, Cloud Run, App Engine
+- **Storage**: Cloud Storage, Cloud SQL, Cloud Bigtable, Cloud Spanner
+- **AI/ML**: Vertex AI, AutoML, Vision API, Speech API, Natural Language API
+- **Data & Analytics**: BigQuery, Dataflow, Dataproc, Pub/Sub
+
+#### **Specialized Services**
+- Maps & Location Services (15+ APIs)
+- Firebase Services & Hosting
+- Cloud IoT Core, Gaming Services
+- Healthcare & Life Sciences APIs
+
+#### **Instance Types (194+ Supported)**
+- **General Purpose**: E2, N1, N2, N2D, T2D, T2A
+- **Compute Optimized**: C3, C2, C2D
+- **Memory Optimized**: M1, M2, M3 (Ultramem, Megamem, Hypermem)
+- **Accelerated Computing**: A2 (NVIDIA A100), A3 (NVIDIA H100), G2 (NVIDIA L4)
+- **Specialized**: H3, Sole Tenant Nodes, Custom Machine Types
+
+#### **Regions Supported**: 40+ GCP regions worldwide
+
+### 🔷 **Microsoft Azure**
+**35+ Core Services** including:
+- Virtual Machines, Blob Storage, SQL Database
+- Azure Functions, AKS, Container Instances
+- Cosmos DB, Cognitive Services
+- **Regions**: 35+ Azure regions globally
+
+### 🌍 **Multi-Region Support**
+- **AWS Regions**: 29 regions including us-east-1, eu-west-1, ap-southeast-1
+- **GCP Regions**: 40+ regions including us-central1, europe-west1, asia-southeast1  
+- **Azure Regions**: 35+ regions including East US, West Europe, Southeast Asia
 
 ---
 
@@ -97,6 +223,14 @@ open http://localhost:3000
 - **Frontend**: http://localhost:3000
 - **Backend API**: http://localhost:8000
 - **API Documentation**: http://localhost:8000/docs
+
+### 🎯 **First Steps After Setup**
+
+1. **Create Organization**: Set up your company/team organization
+2. **Configure Integrations**: Add Slack, Discord, or Email webhooks  
+3. **Add Services**: Start tracking your cloud services with instance types
+4. **Set Budgets**: Configure budget alerts and reminders
+5. **Add OpenAI Key**: Enable AI-powered cost optimization insights
 
 ---
 

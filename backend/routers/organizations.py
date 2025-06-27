@@ -6,7 +6,7 @@ import json
 import os
 import requests
 
-from models.organization import Organization, OrganizationCreate, AddUserToOrg, UpdateOrganizationBudget
+from models.organization import Organization, OrganizationCreate, AddUserToOrg, UpdateOrganizationBudget, AddModeratorToOrg, RemoveModeratorFromOrg
 from models.user import User
 from routers.auth import get_current_user
 from utils.redis_db import redis_db
@@ -26,6 +26,7 @@ async def create_organization(
         "budget": org.budget,
         "owner_id": current_user.id,
         "members": [current_user.id],
+        "moderators": [],  # Initialize empty moderators list
         "created_at": datetime.utcnow().isoformat()
     }
     
@@ -67,6 +68,11 @@ async def get_organization(
     if not org_data:
         raise HTTPException(status_code=404, detail="Organization not found")
     
+    # Ensure backwards compatibility with existing organizations
+    if "moderators" not in org_data:
+        org_data["moderators"] = []
+        redis_db.set(org_key, org_data)  # Update the stored data
+    
     return Organization(**org_data)
 
 @router.put("/{org_id}/budget")
@@ -82,8 +88,8 @@ async def update_organization_budget(
     if not org_data:
         raise HTTPException(status_code=404, detail="Organization not found")
     
-    if org_data["owner_id"] != current_user.id:
-        raise HTTPException(status_code=403, detail="Only organization owner can update budget")
+    if not has_moderator_access(org_data, current_user.id):
+        raise HTTPException(status_code=403, detail="Only organization owner or moderators can update budget")
     
     # Update budget
     org_data["budget"] = budget_data.budget
@@ -104,8 +110,8 @@ async def add_user_to_organization(
     if not org_data:
         raise HTTPException(status_code=404, detail="Organization not found")
     
-    if org_data["owner_id"] != current_user.id:
-        raise HTTPException(status_code=403, detail="Only organization owner can add users")
+    if not has_moderator_access(org_data, current_user.id):
+        raise HTTPException(status_code=403, detail="Only organization owner or moderators can add users")
     
     # Find user by email
     email_key = f"email:{user_data.user_email}"
@@ -143,7 +149,7 @@ async def delete_organization(
     if not org_data:
         raise HTTPException(status_code=404, detail="Organization not found")
     
-    if org_data["owner_id"] != current_user.id:
+    if not is_owner(org_data, current_user.id):
         raise HTTPException(status_code=403, detail="Only organization owner can delete organization")
     
     # Remove organization from all members' lists
@@ -186,8 +192,8 @@ async def remove_user_from_organization(
     if not org_data:
         raise HTTPException(status_code=404, detail="Organization not found")
     
-    if org_data["owner_id"] != current_user.id:
-        raise HTTPException(status_code=403, detail="Only organization owner can remove users")
+    if not has_moderator_access(org_data, current_user.id):
+        raise HTTPException(status_code=403, detail="Only organization owner or moderators can remove users")
     
     # Can't remove the owner
     if user_id == org_data["owner_id"]:
@@ -208,26 +214,58 @@ async def remove_user_from_organization(
     return {"message": "User removed successfully"}
 
 # OpenAI API Key Management
-@router.post("/api-key/openai")
+@router.post("/{org_id}/api-key/openai")
 async def save_openai_api_key(
+    org_id: str,
     api_key_data: dict,
     current_user: User = Depends(get_current_user)
 ):
-    """Save OpenAI API key for the user"""
+    """Save OpenAI API key for an organization (owner only)"""
+    # Check if user has access to this organization
+    if org_id not in current_user.organizations:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Check if current user is owner of the organization
+    org_key = f"org:{org_id}"
+    org_data = redis_db.get(org_key)
+    
+    if not org_data:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    if org_data["owner_id"] != current_user.id:
+        raise HTTPException(status_code=403, detail="Only organization owner can manage OpenAI API keys")
+    
     api_key = api_key_data.get("api_key")
     if not api_key:
         raise HTTPException(status_code=400, detail="API key is required")
     
-    # Save API key associated with user
-    api_key_storage = f"openai_key:{current_user.id}"
+    # Save API key associated with organization
+    api_key_storage = f"openai_key:{org_id}"
     redis_db.set(api_key_storage, {"api_key": api_key, "created_at": datetime.utcnow().isoformat()})
     
     return {"message": "OpenAI API key saved successfully"}
 
-@router.get("/api-key/openai/status")
-async def get_openai_api_key_status(current_user: User = Depends(get_current_user)):
-    """Check if user has saved an OpenAI API key"""
-    api_key_storage = f"openai_key:{current_user.id}"
+@router.get("/{org_id}/api-key/openai/status")
+async def get_openai_api_key_status(
+    org_id: str, 
+    current_user: User = Depends(get_current_user)
+):
+    """Check if organization has saved an OpenAI API key (owner only)"""
+    # Check if user has access to this organization
+    if org_id not in current_user.organizations:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Check if current user is owner of the organization
+    org_key = f"org:{org_id}"
+    org_data = redis_db.get(org_key)
+    
+    if not org_data:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    if org_data["owner_id"] != current_user.id:
+        raise HTTPException(status_code=403, detail="Only organization owner can view OpenAI API key status")
+    
+    api_key_storage = f"openai_key:{org_id}"
     api_key_data = redis_db.get(api_key_storage)
     
     return {
@@ -235,10 +273,27 @@ async def get_openai_api_key_status(current_user: User = Depends(get_current_use
         "created_at": api_key_data.get("created_at") if api_key_data else None
     }
 
-@router.delete("/api-key/openai")
-async def delete_openai_api_key(current_user: User = Depends(get_current_user)):
-    """Delete saved OpenAI API key"""
-    api_key_storage = f"openai_key:{current_user.id}"
+@router.delete("/{org_id}/api-key/openai")
+async def delete_openai_api_key(
+    org_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Delete saved OpenAI API key (owner only)"""
+    # Check if user has access to this organization
+    if org_id not in current_user.organizations:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Check if current user is owner of the organization
+    org_key = f"org:{org_id}"
+    org_data = redis_db.get(org_key)
+    
+    if not org_data:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    if org_data["owner_id"] != current_user.id:
+        raise HTTPException(status_code=403, detail="Only organization owner can delete OpenAI API keys")
+    
+    api_key_storage = f"openai_key:{org_id}"
     redis_db.delete(api_key_storage)
     
     return {"message": "OpenAI API key deleted successfully"}
@@ -254,22 +309,26 @@ async def get_ai_insights(
     if org_id not in current_user.organizations:
         raise HTTPException(status_code=403, detail="Access denied")
     
-    # Get user's OpenAI API key
-    api_key_storage = f"openai_key:{current_user.id}"
+    # Get organization data first
+    org_key = f"org:{org_id}"
+    org_data = redis_db.get(org_key)
+    
+    if not org_data:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    # Check if current user is owner of the organization (only owners can generate AI insights)
+    if org_data["owner_id"] != current_user.id:
+        raise HTTPException(status_code=403, detail="Only organization owner can generate AI insights")
+    
+    # Get organization's OpenAI API key
+    api_key_storage = f"openai_key:{org_id}"
     api_key_data = redis_db.get(api_key_storage)
     
     print(f"Debug: Looking for API key at {api_key_storage}")
     print(f"Debug: API key data found: {api_key_data is not None}")
     
     if not api_key_data:
-        raise HTTPException(status_code=400, detail="OpenAI API key not configured. Please add your API key in the dashboard.")
-    
-    # Get organization data
-    org_key = f"org:{org_id}"
-    org_data = redis_db.get(org_key)
-    
-    if not org_data:
-        raise HTTPException(status_code=404, detail="Organization not found")
+        raise HTTPException(status_code=400, detail="OpenAI API key not configured for this organization. Please add your API key in the integration settings.")
     
     # Get all services for this organization using the correct field name
     services = []
@@ -388,3 +447,148 @@ async def get_ai_insights(
     except Exception as e:
         print(f"General error: {e}")
         raise HTTPException(status_code=500, detail=f"Error generating insights: {str(e)}")
+
+@router.get("/{org_id}/members")
+async def get_organization_members(
+    org_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    # Check if user has access to this organization
+    if org_id not in current_user.organizations:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    org_key = f"org:{org_id}"
+    org_data = redis_db.get(org_key)
+    
+    if not org_data:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    # Get member details
+    members = []
+    for member_id in org_data["members"]:
+        user_key = f"user:{member_id}"
+        user_data = redis_db.get(user_key)
+        if user_data:
+            members.append({
+                "id": member_id,
+                "email": user_data["email"],
+                "is_owner": member_id == org_data["owner_id"]
+            })
+    
+    return {"members": members}
+
+# Helper functions for permission checking
+def is_owner(org_data: dict, user_id: str) -> bool:
+    """Check if user is the owner of the organization"""
+    return org_data["owner_id"] == user_id
+
+def is_moderator(org_data: dict, user_id: str) -> bool:
+    """Check if user is a moderator of the organization"""
+    return user_id in org_data.get("moderators", [])
+
+def has_moderator_access(org_data: dict, user_id: str) -> bool:
+    """Check if user has moderator access (owner or moderator)"""
+    # Ensure backwards compatibility
+    if "moderators" not in org_data:
+        org_data["moderators"] = []
+    return is_owner(org_data, user_id) or is_moderator(org_data, user_id)
+
+# Moderator Management Endpoints
+@router.post("/{org_id}/moderators")
+async def add_moderator_to_organization(
+    org_id: str,
+    moderator_data: AddModeratorToOrg,
+    current_user: User = Depends(get_current_user)
+):
+    """Add a moderator to the organization (owner only)"""
+    # Check if current user is owner of the organization
+    org_key = f"org:{org_id}"
+    org_data = redis_db.get(org_key)
+    
+    if not org_data:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    if not is_owner(org_data, current_user.id):
+        raise HTTPException(status_code=403, detail="Only organization owner can add moderators")
+    
+    # Find user by email
+    email_key = f"email:{moderator_data.user_email}"
+    user_id = redis_db.get(email_key)
+    
+    if not user_id:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if user is a member of the organization
+    if user_id not in org_data["members"]:
+        raise HTTPException(status_code=400, detail="User must be a member before becoming a moderator")
+    
+    # Check if user is already a moderator
+    if user_id in org_data.get("moderators", []):
+        raise HTTPException(status_code=400, detail="User is already a moderator")
+    
+    # Can't make owner a moderator (they already have all permissions)
+    if user_id == org_data["owner_id"]:
+        raise HTTPException(status_code=400, detail="Owner already has all permissions")
+    
+    # Add user as moderator
+    if "moderators" not in org_data:
+        org_data["moderators"] = []
+    
+    org_data["moderators"].append(user_id)
+    redis_db.set(org_key, org_data)
+    
+    return {"message": "User added as moderator successfully"}
+
+@router.delete("/{org_id}/moderators/{user_id}")
+async def remove_moderator_from_organization(
+    org_id: str,
+    user_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Remove a moderator from the organization (owner only)"""
+    # Check if current user is owner of the organization
+    org_key = f"org:{org_id}"
+    org_data = redis_db.get(org_key)
+    
+    if not org_data:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    if not is_owner(org_data, current_user.id):
+        raise HTTPException(status_code=403, detail="Only organization owner can remove moderators")
+    
+    # Remove user from moderators
+    if user_id in org_data.get("moderators", []):
+        org_data["moderators"].remove(user_id)
+        redis_db.set(org_key, org_data)
+        return {"message": "Moderator removed successfully"}
+    else:
+        raise HTTPException(status_code=400, detail="User is not a moderator")
+
+@router.get("/{org_id}/moderators")
+async def get_organization_moderators(
+    org_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get list of organization moderators"""
+    # Check if user has access to this organization
+    if org_id not in current_user.organizations:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    org_key = f"org:{org_id}"
+    org_data = redis_db.get(org_key)
+    
+    if not org_data:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    # Get moderator details
+    moderators = []
+    for moderator_id in org_data.get("moderators", []):
+        user_key = f"user:{moderator_id}"
+        user_data = redis_db.get(user_key)
+        if user_data:
+            moderators.append({
+                "id": moderator_id,
+                "email": user_data["email"]
+            })
+    
+    return {"moderators": moderators}
